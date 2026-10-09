@@ -1,0 +1,29 @@
+{
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.terminal.activateEnvironment": true,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/*.egg-info": true,
+        "build": true
+    },
+    "search.exclude": {
+        "**/.venv": true,
+        "build": true,
+        "reports": true
+    },
+    "files.associations": {
+        "*.hpp": "cpp"
+    },
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/cpp/include",
+        "${workspaceFolder}/.venv/**"
+    ],
+    "cmake.configureOnOpen": false,
+    "markdown.preview.breaks": false
+}

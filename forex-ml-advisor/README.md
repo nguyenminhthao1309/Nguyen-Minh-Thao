@@ -20,11 +20,91 @@ matches the C++ to 1e-9.
 
 ---
 
-## Quick start
+## Run it in Visual Studio Code
+
+### 1. Install the tools (once)
+
+| tool | where | notes |
+|---|---|---|
+| **Python 3.10 or newer** | https://www.python.org/downloads/ | Windows: tick **"Add python.exe to PATH"** in the installer |
+| **Visual Studio Code** | https://code.visualstudio.com/ | |
+| C++ compiler (optional) | Windows: [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/), "Desktop development with C++" workload. macOS: `xcode-select --install`. Linux: `sudo apt install g++` | Without a compiler everything still works on the NumPy fallback, just slower |
+
+### 2. Open the folder
+
+1. Save the `forex-ml-advisor` folder anywhere, for example in Documents. Unzip it first if you
+   downloaded the `.zip`.
+2. In VS Code choose **File > Open Folder...** and select the `forex-ml-advisor` folder itself (the one
+   that contains `run.py`), not a folder above it. Otherwise VS Code will not find the run buttons.
+3. Click **Install** when VS Code offers the recommended extensions (Python, Python Debugger, C/C++).
+
+### 3. Set up (once, about 2-5 minutes)
+
+* **Terminal > Run Task... > "1. Setup: create .venv, install packages, build C++ core"**
+* Or double-click `setup_windows.bat` (Windows), or run `bash setup_mac_linux.sh` (macOS/Linux).
+
+The setup creates a private Python environment in `.venv`, installs the packages, and builds the C++
+core. At the end it prints `Numeric core in use: c++`, or `python` if no compiler was found.
+
+Then tell VS Code to use that environment: press **Ctrl+Shift+P** (Cmd+Shift+P on Mac), run
+**Python: Select Interpreter**, and pick the entry that shows `.venv`.
+
+### 4. Run
+
+Open **Run and Debug** (Ctrl+Shift+D), choose a configuration from the drop-down, and press **F5**:
+
+| configuration | what it does |
+|---|---|
+| 1. Demo - synthetic market (offline) | full analysis on the built-in simulated market (no internet needed) |
+| 2. Live - Yahoo Finance data | real hourly prices for all 28 pairs (needs internet) |
+| 3. My data - CSV files in the data folder | your own price files, see `data/README.md` |
+| 4. Quick run - majors only | 7 pairs, fewer refits; about 15 seconds |
+| 5. run.py | uses the SETTINGS at the top of `run.py` (source, pairs, account size, risk) |
+| 6. Save live Yahoo data to the data folder | downloads prices to CSV and merges them with older files |
+| 7. Benchmark - C++ core vs Python | speed comparison |
+| 8. Run all tests | the test suite |
+
+You can also open `run.py`, edit `SETTINGS`, and click the **Run** button at the top right.
+
+### 5. Read the result
+
+The summary appears in the terminal. The full report is written to **`reports/latest_report.md`**:
+open it and press **Ctrl+Shift+V** to see it formatted. Each run also keeps a time-stamped copy, a JSON
+file of the trade ideas, and CSV tables.
+
+### Troubleshooting
+
+| message | fix |
+|---|---|
+| `No module named 'numpy'` (or pandas / sklearn) | VS Code is using another Python. Run the setup, then **Python: Select Interpreter** > `.venv` |
+| `Python 3.10 or newer was not found` | install Python from python.org (Windows: tick "Add python.exe to PATH"), restart VS Code |
+| `running scripts is disabled on this system` (PowerShell) | run once in the terminal: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| `Numeric core in use: python` | no C++ compiler was found. Results are identical, only slower. Install one (table above) and run the setup again |
+| `No data loaded` with Yahoo | check your internet connection; Yahoo sometimes rate-limits, so wait a few minutes or pick fewer pairs |
+| `could not create .venv` on Linux | `sudo apt install python3-venv` |
+
+### What is in the folder
+
+```
+forex-ml-advisor/
+  run.py                  one-click entry point (edit SETTINGS at the top)
+  setup_windows.bat       one-click setup for Windows
+  setup_mac_linux.sh      one-click setup for macOS / Linux
+  .vscode/                run configurations, tasks, test and editor settings
+  fxquant/                the Python package (ML, analytics, reports)
+  cpp/                    the C++ core (indicators, labelling, backtester) + C++ unit tests
+  tests/                  Python test suite
+  data/                   put your own CSV price files here
+  reports/                created on the first run; reports are written here
+```
+
+---
+
+## Command line (any terminal)
 
 ```bash
 cd forex-ml-advisor
-pip install -e .            # builds the C++ extension (needs a C++17 compiler)
+pip install -e .            # installs fxquant and builds the C++ core if a compiler is available
 pip install yfinance        # optional: live data
 
 # Offline demo on a synthetic market (no internet needed)
@@ -36,6 +116,9 @@ fxquant analyze --source yahoo --equity 25000 --risk 0.5
 # Only majors and crosses, your own CSV files (EURUSD.csv, GBPJPY.csv, ...)
 fxquant analyze --source csv --csv-dir ./data --segments major,cross
 
+# Save live data to data/*.csv (re-run later to extend the history)
+fxquant save-data --source yahoo --out data
+
 # C++ vs Python speed comparison
 fxquant bench
 ```
@@ -44,7 +127,7 @@ fxquant bench
 
 | file | contents |
 |---|---|
-| `fx_report_<time>.md` | full report: trade ideas, every market section, model diagnostics, watchlist |
+| `latest_report.md`, `fx_report_<time>.md` | full report: trade ideas, every market section, model diagnostics, watchlist |
 | `trade_ideas_<time>.json` | machine-readable ideas (entry/stop/target/lots/risk/rationale) |
 | `pairs_*.csv`, `segments_*.csv`, `sessions_*.csv`, `strength_*.csv`, `folds_*.csv` | raw tables |
 
@@ -58,8 +141,8 @@ cmake -S . -B build && cmake --build build -j && ctest --test-dir build   # C++ 
 cmake -S . -B build -DFXCORE_BUILD_PYTHON=ON && cmake --build build       # module via CMake
 ```
 
-If the extension is missing, `fxquant` falls back to NumPy automatically. Set `FXQUANT_BACKEND=python`
-to force the fallback.
+The C++ core is optional: if it cannot be compiled, installation still succeeds and `fxquant` uses its
+NumPy implementation automatically. Set `FXQUANT_BACKEND=python` to force the fallback.
 
 ---
 
@@ -136,7 +219,7 @@ currency conversion.
 ## Testing
 
 ```bash
-pytest                          # 38 tests, about 1 minute
+pytest                          # 43 tests, about 1 minute
 FXQUANT_BACKEND=python pytest   # same tests on the NumPy fallback
 ```
 
@@ -149,6 +232,7 @@ The tests cover:
 * **No false edge**: on pure random walks it does not (AUC ≈ 0.5, at most 2 ideas pass the gates).
 * **Risk maths**: pip values, cross-currency conversion, Kelly, per-currency and correlation limits.
 * **Sessions**: London opens 07:00 UTC in summer and 08:00 UTC in winter.
+* **Data loading**: MetaTrader, Dukascopy, ISO and US time-stamp formats; live-feed handling.
 
 ## Synthetic market
 

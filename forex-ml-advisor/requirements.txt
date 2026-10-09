@@ -1,7 +1,8 @@
 numpy>=1.24
 pandas>=2.0
 scikit-learn>=1.4
-pybind11>=2.11
+tzdata              # time-zone database (needed on Windows for session hours)
+pybind11>=2.11      # used to build the optional C++ core
 pytest>=7
-# Optional, for live market data from Yahoo Finance:
+# Live market data from Yahoo Finance (the setup scripts install it separately):
 # yfinance>=0.2.40

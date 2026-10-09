@@ -103,3 +103,17 @@ def test_unfinished_bar_is_dropped():
     df = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=idx)
     trimmed = drop_unfinished_bar(df, now=pd.Timestamp("2026-03-02 04:30", tz="UTC"))
     assert trimmed.index[-1] == pd.Timestamp("2026-03-02 03:00", tz="UTC")
+
+
+@pytest.mark.parametrize("stamps,expected", [
+    (["2026.03.02 00:00", "2026.03.13 01:00"], ["2026-03-02 00:00", "2026-03-13 01:00"]),        # MetaTrader
+    (["02.03.2026 00:00:00.000", "03.03.2026 01:00:00.000"], ["2026-03-02 00:00", "2026-03-03 01:00"]),  # Dukascopy
+    (["02.03.2026 00:00", "13.03.2026 01:00"], ["2026-03-02 00:00", "2026-03-13 01:00"]),        # day > 12
+    (["03/02/2026 00:00", "03/13/2026 01:00"], ["2026-03-02 00:00", "2026-03-13 01:00"]),        # US month-first
+    (["2026-03-02 00:00:00+00:00", "2026-03-02 03:00:00+02:00"], ["2026-03-02 00:00", "2026-03-02 01:00"]),
+])
+def test_timestamp_formats(stamps, expected):
+    from fxquant.data import parse_timestamps
+
+    got = parse_timestamps(pd.Series(stamps))
+    assert list(got) == [pd.Timestamp(e, tz="UTC") for e in expected]

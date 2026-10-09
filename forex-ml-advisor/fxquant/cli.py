@@ -1,9 +1,10 @@
-"""Command line interface: `fxquant analyze ...` and `fxquant bench`."""
+"""Command line interface: `fxquant analyze`, `fxquant save-data` and `fxquant bench`."""
 
 from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -34,12 +35,37 @@ def cmd_analyze(args) -> None:
     data = load_data(args.source, cfg.pairs, csv_dir=args.csv_dir, interval=args.interval, period=args.period,
                      years=args.years, seed=args.seed, momentum=args.momentum)
     if not data:
-        raise SystemExit("no data loaded")
+        raise SystemExit("No data loaded. For --source yahoo check your internet connection; "
+                         "for --source csv check the folder and file names (e.g. data/EURUSD.csv).")
     result = ForexAdvisor(cfg).run(data)
     paths = save_report(result, args.out)
     print()
     print(console_summary(result))
     print(f"\nReport: {paths['report']}\nIdeas:  {paths['ideas']}")
+    print(f"Latest report is always at {paths['latest']} (in VS Code: open it and press Ctrl+Shift+V)")
+
+
+def cmd_save_data(args) -> None:
+    """Save market data as one CSV per pair, merging with files already there."""
+    import pandas as pd
+
+    from .data import load_data, read_csv_ohlc
+
+    pairs = _pairs(args)
+    print(f"[cli] downloading {len(pairs)} pairs from {args.source} ...")
+    data = load_data(args.source, pairs, interval=args.interval, period=args.period,
+                     years=args.years, seed=args.seed, momentum=args.momentum)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for pair, df in data.items():
+        path = out / f"{pair}.csv"
+        if path.exists():  # keep older history so the archive grows beyond the feed's limit
+            old = read_csv_ohlc(path)
+            df = pd.concat([old, df])
+            df = df[~df.index.duplicated(keep="last")].sort_index()
+        df.rename_axis("timestamp").to_csv(path)
+        print(f"  {path}  {len(df):,} bars  {df.index[0]:%Y-%m-%d} -> {df.index[-1]:%Y-%m-%d}")
+    print(f"Saved {len(data)} pairs. Analyse them with: python -m fxquant analyze --source csv --csv-dir {out}")
 
 
 def cmd_bench(args) -> None:
@@ -47,7 +73,8 @@ def cmd_bench(args) -> None:
     from . import core
 
     if core.BACKEND != "c++":
-        raise SystemExit("C++ extension not built: run `pip install -e .` first")
+        raise SystemExit("The C++ core is not built, so there is nothing to compare. Install a C++ compiler "
+                         "and run the setup again (or `pip install -e .`). See README, 'C++ compiler'.")
     from . import _fxcore as cpp
 
     rng = np.random.default_rng(0)
@@ -79,7 +106,7 @@ def main(argv: list[str] | None = None) -> None:
 
     a = sub.add_parser("analyze", help="analyse the market and produce trade ideas")
     a.add_argument("--source", choices=["synthetic", "yahoo", "csv"], default="synthetic")
-    a.add_argument("--csv-dir", help="folder with one <PAIR>.csv per pair (for --source csv)")
+    a.add_argument("--csv-dir", default="data", help="folder with one <PAIR>.csv per pair (for --source csv)")
     a.add_argument("--pairs", help="comma-separated list, e.g. EURUSD,GBPUSD,USDJPY")
     a.add_argument("--segments", help="comma-separated subset of: major,cross,exotic")
     a.add_argument("--interval", default="1h", help="Yahoo bar size (1h recommended)")
@@ -94,6 +121,18 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--fast", action="store_true", help="fewer refits for a quicker run")
     a.add_argument("--out", default="reports", help="output folder")
     a.set_defaults(func=cmd_analyze)
+
+    d = sub.add_parser("save-data", help="save market data to CSV files (merges with existing files)")
+    d.add_argument("--source", choices=["synthetic", "yahoo"], default="yahoo")
+    d.add_argument("--pairs", help="comma-separated list, e.g. EURUSD,GBPUSD,USDJPY")
+    d.add_argument("--segments", help="comma-separated subset of: major,cross,exotic")
+    d.add_argument("--interval", default="1h")
+    d.add_argument("--period", default="730d")
+    d.add_argument("--years", type=float, default=2.0)
+    d.add_argument("--seed", type=int, default=42)
+    d.add_argument("--momentum", type=float, default=0.06)
+    d.add_argument("--out", default="data", help="output folder")
+    d.set_defaults(func=cmd_save_data)
 
     b = sub.add_parser("bench", help="compare the C++ core with the NumPy fallback")
     b.add_argument("--bars", type=int, default=50_000)

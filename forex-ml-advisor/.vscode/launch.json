@@ -1,0 +1,169 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "1. Demo - synthetic market (offline)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "analyze",
+                "--source",
+                "synthetic"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "1. Run the analysis",
+                "order": 1
+            }
+        },
+        {
+            "name": "2. Live - Yahoo Finance data (needs internet)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "analyze",
+                "--source",
+                "yahoo"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "1. Run the analysis",
+                "order": 2
+            }
+        },
+        {
+            "name": "3. My data - CSV files in the data folder",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "analyze",
+                "--source",
+                "csv",
+                "--csv-dir",
+                "data"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "1. Run the analysis",
+                "order": 3
+            }
+        },
+        {
+            "name": "4. Quick run - majors only, fewer refits",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "analyze",
+                "--source",
+                "synthetic",
+                "--segments",
+                "major",
+                "--fast"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "1. Run the analysis",
+                "order": 4
+            }
+        },
+        {
+            "name": "5. run.py - uses the SETTINGS at the top of run.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "1. Run the analysis",
+                "order": 5
+            }
+        },
+        {
+            "name": "6. Save live Yahoo data to the data folder (CSV)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "save-data",
+                "--source",
+                "yahoo",
+                "--out",
+                "data"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "2. Tools",
+                "order": 6
+            }
+        },
+        {
+            "name": "7. Benchmark - C++ core vs Python",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fxquant",
+            "args": [
+                "bench"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
+            "presentation": {
+                "group": "2. Tools",
+                "order": 7
+            }
+        },
+        {
+            "name": "8. Run all tests (pytest)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "-q",
+                "tests"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "presentation": {
+                "group": "2. Tools",
+                "order": 8
+            }
+        }
+    ]
+}

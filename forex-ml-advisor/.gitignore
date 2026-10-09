@@ -1,10 +1,18 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Compiled C++ core and build folders
 *.so
 *.pyd
-*.egg-info/
 build/
 dist/
-.pytest_cache/
+
+# Outputs and market data (data/README.md is kept)
 reports/
-data/
+data/*
+!data/README.md

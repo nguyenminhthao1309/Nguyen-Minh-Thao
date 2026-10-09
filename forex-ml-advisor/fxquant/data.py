@@ -81,6 +81,35 @@ def drop_unfinished_bar(df: pd.DataFrame, now: pd.Timestamp | None = None) -> pd
 _TIME_COLUMNS = ("timestamp", "datetime", "date_time", "gmt time", "local time", "time", "date")
 
 
+def parse_timestamps(stamps: pd.Series) -> pd.DatetimeIndex:
+    """Parse broker time stamps into UTC, deciding day/month order from the data itself.
+
+    Year-first dates (2026-03-02, 2026.03.02) are unambiguous. For day/month
+    dates the column is scanned: a first field above 12 means day-first, a
+    second field above 12 means month-first; otherwise dotted dates
+    (02.03.2026, Dukascopy/European) are read day-first and slashed dates
+    (03/02/2026) month-first.
+    """
+    s = pd.Series(stamps).astype(str).str.strip().reset_index(drop=True)
+    head = s.str.extract(r"^(\d{1,4})([./-])(\d{1,2})[./-](\d{1,4})")
+    if head.notna().all(axis=None) and len(s):
+        rest = s.str.replace(r"^\d{1,4}[./-]\d{1,2}[./-]\d{1,4}", "", regex=True)
+        if (head[0].str.len() == 4).all():  # year first
+            year, month, day = head[0], head[2], head[3]
+        else:
+            first, second = head[0].astype(int), head[2].astype(int)
+            if first.max() > 12:
+                day_first = True
+            elif second.max() > 12:
+                day_first = False
+            else:
+                day_first = head[1].iloc[0] == "."
+            year = head[3]
+            day, month = (head[0], head[2]) if day_first else (head[2], head[0])
+        s = year + "-" + month.str.zfill(2) + "-" + day.str.zfill(2) + rest
+    return pd.DatetimeIndex(pd.to_datetime(s, format="mixed", utc=True))
+
+
 def read_csv_ohlc(path: str | Path) -> pd.DataFrame:
     raw = pd.read_csv(path)
     raw.columns = [str(c).strip().lower().lstrip("<").rstrip(">") for c in raw.columns]
@@ -94,9 +123,8 @@ def read_csv_ohlc(path: str | Path) -> pd.DataFrame:
     missing = [c for c in OHLC if c not in raw.columns]
     if missing:
         raise ValueError(f"{path}: missing columns {missing}")
-    stamps = pd.Series(stamps).astype(str).str.replace(".", "-", n=2, regex=False)
     df = raw[OHLC].copy()
-    df.index = _to_utc(pd.to_datetime(stamps, utc=False, format="mixed", dayfirst=False))
+    df.index = parse_timestamps(stamps)
     return clean_ohlc(df)
 
 

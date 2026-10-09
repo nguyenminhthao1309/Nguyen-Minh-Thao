@@ -198,11 +198,14 @@ def save_report(res: AnalysisResult, out_dir: str | Path) -> dict[str, Path]:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     stamp = f"{res.data_end:%Y%m%d_%H%M}"
-    paths = {"report": out / f"fx_report_{stamp}.md", "ideas": out / f"trade_ideas_{stamp}.json"}
-    paths["report"].write_text(render_markdown(res), encoding="utf-8")
+    paths = {"report": out / f"fx_report_{stamp}.md", "ideas": out / f"trade_ideas_{stamp}.json",
+             "latest": out / "latest_report.md", "latest_ideas": out / "latest_trade_ideas.json"}
+    markdown = render_markdown(res)
     ideas = [{k: _jsonable(v) for k, v in r.items()} for r in res.recommendations]
-    paths["ideas"].write_text(json.dumps({"generated_at": res.generated_at.isoformat(),
-                                          "data_end": res.data_end.isoformat(), "ideas": ideas}, indent=2))
+    ideas_json = json.dumps({"generated_at": res.generated_at.isoformat(),
+                             "data_end": res.data_end.isoformat(), "ideas": ideas}, indent=2)
+    for key, text in (("report", markdown), ("latest", markdown), ("ideas", ideas_json), ("latest_ideas", ideas_json)):
+        paths[key].write_text(text, encoding="utf-8")
     tables = {"pairs": res.pair_table, "segments": res.segment_table, "sessions": res.session_stats,
               "strength": res.strength_table, "folds": res.folds}
     for name, df in tables.items():
