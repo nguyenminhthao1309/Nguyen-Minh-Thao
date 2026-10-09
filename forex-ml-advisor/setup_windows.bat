@@ -8,7 +8,7 @@ setlocal
 cd /d "%~dp0"
 echo.
 echo === fxquant setup (Windows) ===
-echo Folder: %CD%
+echo Folder: "%CD%"
 echo.
 
 rem --- 1. Find Python 3.10 or newer -----------------------------------------
@@ -39,6 +39,11 @@ if exist ".venv\Scripts\python.exe" (
     if errorlevel 1 (
         echo The existing .venv is incomplete - recreating it ...
         rmdir /s /q .venv
+        if exist ".venv\Scripts\python.exe" (
+            echo [error] Could not delete the old .venv folder, probably because VS Code is using it.
+            echo         Close VS Code, delete the .venv folder by hand, then run this setup again.
+            goto :fail
+        )
     )
 )
 if not exist ".venv\Scripts\python.exe" (
@@ -74,7 +79,7 @@ if errorlevel 1 (
 echo.
 echo === Setup complete ===
 echo In VS Code: press Ctrl+Shift+P, run "Python: Select Interpreter" and choose .venv,
-echo then press F5 and pick "1. Demo - synthetic market (offline)".
+echo then open Run and Debug, pick "1. Demo - synthetic market (offline)" and press Ctrl+F5.
 if "%~1"=="" pause
 exit /b 0
 

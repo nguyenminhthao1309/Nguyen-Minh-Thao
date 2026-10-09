@@ -68,4 +68,4 @@ fi
 echo
 echo "=== Setup complete ==="
 echo "In VS Code: press Ctrl+Shift+P (Cmd+Shift+P on Mac), run \"Python: Select Interpreter\" and choose .venv,"
-echo "then press F5 and pick \"1. Demo - synthetic market (offline)\"."
+echo "then open Run and Debug, pick \"1. Demo - synthetic market (offline)\" and press Ctrl+F5 (Cmd+F5 on Mac)."
