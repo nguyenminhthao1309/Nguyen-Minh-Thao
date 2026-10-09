@@ -6,6 +6,8 @@ Every loader returns ``dict[pair, DataFrame]`` with a UTC DatetimeIndex
 
 from __future__ import annotations
 
+import datetime as dt
+import re
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +16,10 @@ import pandas as pd
 from .config import UNIVERSE, pair_spec
 
 OHLC = ["open", "high", "low", "close"]
+
+
+class DataError(Exception):
+    """A data problem the user can fix (shown as a short message, not a traceback)."""
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +56,27 @@ def load_yahoo(pairs: list[str], interval: str = "1h", period: str = "730d") -> 
     """Download OHLC bars from Yahoo Finance (hourly history is limited to ~730 days)."""
     try:
         import yfinance as yf
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise ImportError("Live data needs yfinance: pip install yfinance") from exc
+    except ImportError as exc:  # optional dependency
+        raise DataError("Live data needs the yfinance package. Run the setup again, or install it with: "
+                        "python -m pip install yfinance") from exc
 
+    import logging
+
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)  # its retries/delisting notes are noise here
     out: dict[str, pd.DataFrame] = {}
+    misses = 0
     for pair in pairs:
-        hist = yf.Ticker(f"{pair}=X").history(period=period, interval=interval, auto_adjust=False)
-        if hist.empty:
-            print(f"[data] no Yahoo data for {pair}, skipping")
+        try:
+            hist = yf.Ticker(f"{pair}=X").history(period=period, interval=interval, auto_adjust=False)
+            reason = "no data returned" if hist is None or hist.empty else ""
+        except Exception as exc:  # network down, firewall, rate limit, Yahoo API change ...
+            hist, reason = None, exc.__class__.__name__
+        if reason:
+            misses += 1
+            print(f"[data] {pair}: could not download from Yahoo Finance ({reason})")
+            if not out and misses >= 3:
+                print("[data] giving up: the first pairs all failed, so Yahoo Finance is probably unreachable")
+                break
             continue
         hist.columns = [c.lower() for c in hist.columns]
         hist.index = _to_utc(hist.index)
@@ -81,14 +100,31 @@ def drop_unfinished_bar(df: pd.DataFrame, now: pd.Timestamp | None = None) -> pd
 _TIME_COLUMNS = ("timestamp", "datetime", "date_time", "gmt time", "local time", "time", "date")
 
 
-def parse_timestamps(stamps: pd.Series) -> pd.DatetimeIndex:
+def resolve_timezone(text: str | None):
+    """'UTC', an IANA name such as 'Europe/Athens', or a fixed offset such as 'UTC+2' / '+02:00'."""
+    if text is None or str(text).strip().upper() in ("", "UTC", "GMT", "Z"):
+        return "UTC"
+    m = re.fullmatch(r"(?:UTC|GMT)?\s*([+-])(\d{1,2})(?::?(\d{2}))?", str(text).strip(), flags=re.I)
+    if m:
+        minutes = int(m.group(2)) * 60 + int(m.group(3) or 0)
+        return dt.timezone(dt.timedelta(minutes=minutes if m.group(1) == "+" else -minutes))
+    try:
+        pd.Timestamp("2026-01-01").tz_localize(str(text).strip())
+    except Exception as exc:
+        raise DataError(f"Unknown time zone '{text}'. Use UTC, an offset like UTC+2, or a name like "
+                        "Europe/Athens") from exc
+    return str(text).strip()
+
+
+def parse_timestamps(stamps: pd.Series, timezone: str | None = None) -> pd.DatetimeIndex:
     """Parse broker time stamps into UTC, deciding day/month order from the data itself.
 
     Year-first dates (2026-03-02, 2026.03.02) are unambiguous. For day/month
     dates the column is scanned: a first field above 12 means day-first, a
     second field above 12 means month-first; otherwise dotted dates
     (02.03.2026, Dukascopy/European) are read day-first and slashed dates
-    (03/02/2026) month-first.
+    (03/02/2026) month-first. Stamps without a zone are taken to be in
+    `timezone` (default UTC); stamps with an explicit offset are converted.
     """
     s = pd.Series(stamps).astype(str).str.strip().reset_index(drop=True)
     head = s.str.extract(r"^(\d{1,4})([./-])(\d{1,2})[./-](\d{1,4})")
@@ -107,11 +143,51 @@ def parse_timestamps(stamps: pd.Series) -> pd.DatetimeIndex:
             year = head[3]
             day, month = (head[0], head[2]) if day_first else (head[2], head[0])
         s = year + "-" + month.str.zfill(2) + "-" + day.str.zfill(2) + rest
-    return pd.DatetimeIndex(pd.to_datetime(s, format="mixed", utc=True))
+    tz = resolve_timezone(timezone)
+    try:
+        parsed = pd.DatetimeIndex(pd.to_datetime(s, format="mixed"))
+    except (ValueError, TypeError):  # mixed UTC offsets in one column
+        return pd.DatetimeIndex(pd.to_datetime(s, format="mixed", utc=True))
+    if parsed.tz is not None:
+        return parsed.tz_convert("UTC")
+    local = parsed.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
+    return local.tz_convert("UTC")
 
 
-def read_csv_ohlc(path: str | Path) -> pd.DataFrame:
-    raw = pd.read_csv(path)
+def _sniff_csv(path: Path) -> tuple[str, str, bool]:
+    """(encoding, separator, has_header) of a price file."""
+    head = path.read_bytes()[:4096]
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encoding = "utf-16"
+    elif head.startswith(b"\xef\xbb\xbf"):
+        encoding = "utf-8-sig"
+    else:
+        encoding = "utf-8"
+        try:
+            head.decode("utf-8")
+        except UnicodeDecodeError:
+            encoding = "latin-1"
+    text = head.decode(encoding, errors="ignore").lstrip("\ufeff")
+    first = text.splitlines()[0] if text.strip() else ""
+    if "\t" in first:
+        sep = "\t"
+    elif ";" in first and "," not in first:
+        sep = ";"
+    else:
+        sep = ","
+    has_header = not first.strip()[:1].isdigit()  # MT4 History Center exports have no header row
+    return encoding, sep, has_header
+
+
+def read_csv_ohlc(path: str | Path, timezone: str | None = None) -> pd.DataFrame:
+    path = Path(path)
+    encoding, sep, has_header = _sniff_csv(path)
+    raw = pd.read_csv(path, sep=sep, encoding=encoding, header=0 if has_header else None)
+    if not has_header:
+        two_columns = raw.shape[1] >= 6 and raw.iloc[:, 1].astype(str).str.contains(":").all()
+        names = ["date", "time"] + OHLC if two_columns else ["timestamp"] + OHLC
+        names += [f"extra{i}" for i in range(raw.shape[1] - len(names))]
+        raw.columns = names[:raw.shape[1]]
     raw.columns = [str(c).strip().lower().lstrip("<").rstrip(">") for c in raw.columns]
     if "date" in raw.columns and "time" in raw.columns:
         stamps = raw["date"].astype(str) + " " + raw["time"].astype(str)
@@ -122,22 +198,54 @@ def read_csv_ohlc(path: str | Path) -> pd.DataFrame:
     raw = raw.rename(columns={k: v for k, v in aliases.items() if k in raw.columns and v not in raw.columns})
     missing = [c for c in OHLC if c not in raw.columns]
     if missing:
-        raise ValueError(f"{path}: missing columns {missing}")
-    df = raw[OHLC].copy()
-    df.index = parse_timestamps(stamps)
+        raise DataError(f"{path.name}: missing columns {missing} (found {list(raw.columns)[:8]}). "
+                        "See data/README.md for the supported layouts.")
+    df = raw[OHLC].apply(pd.to_numeric, errors="coerce")
+    df.index = parse_timestamps(stamps, timezone)
+    df = df[df.index.notna()]
     return clean_ohlc(df)
 
 
-def load_csv_dir(directory: str | Path, pairs: list[str] | None = None) -> dict[str, pd.DataFrame]:
+def load_csv_dir(directory: str | Path, pairs: list[str] | None = None,
+                 timezone: str | None = None) -> dict[str, pd.DataFrame]:
+    """Load every <PAIR>.csv in `directory` (only `pairs` if given). Unreadable files are skipped."""
     directory = Path(directory)
-    out: dict[str, pd.DataFrame] = {}
+    if not directory.is_dir():
+        raise DataError(f"The folder '{directory}' does not exist. Create it and put price files such as "
+                        f"{directory / 'EURUSD.csv'} in it (see data/README.md).")
+    files = {}
     for file in sorted(directory.glob("*.csv")):
         pair = "".join(ch for ch in file.stem.upper() if ch.isalpha())[:6]
-        if len(pair) != 6 or (pairs and pair not in pairs):
+        if len(pair) == 6:
+            files.setdefault(pair, file)
+    if not files:
+        raise DataError(f"No price files found in '{directory}'. Put one CSV per pair there, e.g. "
+                        f"{directory / 'EURUSD.csv'} (see data/README.md), or create sample files with: "
+                        f"python -m fxquant save-data --source synthetic --out {directory}")
+    wanted = list(files) if pairs is None else [p for p in pairs if p in files]
+    if pairs is not None:
+        absent = [p for p in pairs if p not in files]
+        if absent and len(absent) < len(pairs):
+            print(f"[data] no file for {', '.join(absent)} in {directory}, skipping")
+        if not wanted:
+            raise DataError(f"None of the requested pairs has a file in '{directory}'. "
+                            f"Files found: {', '.join(sorted(files))}")
+    out: dict[str, pd.DataFrame] = {}
+    for pair in wanted:
+        try:
+            df = read_csv_ohlc(files[pair], timezone)
+        except DataError as exc:
+            print(f"[data] skipping {files[pair].name}: {exc}")
             continue
-        out[pair] = read_csv_ohlc(file)
+        except Exception as exc:
+            print(f"[data] skipping {files[pair].name}: could not read it ({exc.__class__.__name__}: {exc})")
+            continue
+        if df.empty:
+            print(f"[data] skipping {files[pair].name}: no valid rows")
+            continue
+        out[pair] = df
     if not out:
-        raise FileNotFoundError(f"no <PAIR>.csv files found in {directory}")
+        raise DataError(f"No file in '{directory}' could be read. See data/README.md for the supported layouts.")
     return out
 
 
@@ -202,7 +310,7 @@ def generate_synthetic(pairs: list[str] | None = None, years: float = 2.0, end: 
     pairs = pairs or list(UNIVERSE)
     for p in pairs:
         if p[:3] not in _CCY or p[3:] not in _CCY:
-            raise ValueError(f"synthetic market does not include currencies of {p}")
+            raise DataError(f"The synthetic market has no {p}. It covers these currencies: {', '.join(_CCY)}")
     end_ts = pd.Timestamp(end) if end is not None else pd.Timestamp.now(tz="UTC")
     end_ts = end_ts.tz_localize("UTC") if end_ts.tzinfo is None else end_ts.tz_convert("UTC")
     index = fx_trading_hours(end_ts - pd.Timedelta(days=int(365 * years)), end_ts)
@@ -279,5 +387,5 @@ def load_data(source: str, pairs: list[str], **kwargs) -> dict[str, pd.DataFrame
     if source == "yahoo":
         return load_yahoo(pairs, interval=kwargs.get("interval", "1h"), period=kwargs.get("period", "730d"))
     if source == "csv":
-        return load_csv_dir(kwargs["csv_dir"], pairs)
-    raise ValueError(f"unknown data source: {source}")
+        return load_csv_dir(kwargs["csv_dir"], pairs, timezone=kwargs.get("timezone"))
+    raise DataError(f"unknown data source: {source}")

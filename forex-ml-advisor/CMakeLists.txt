@@ -27,11 +27,16 @@ add_test(NAME fxcore_unit_tests COMMAND test_fxcore)
 # Optional: build the Python extension with CMake instead of `pip install -e .`
 option(FXCORE_BUILD_PYTHON "Build the pybind11 Python module" OFF)
 if(FXCORE_BUILD_PYTHON)
+  # Pass -DPython_EXECUTABLE=<path to .venv python> to build for the project's environment.
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
-  execute_process(COMMAND "${Python_EXECUTABLE}" -m pybind11 --cmakedir
+  # get_cmake_dir() returns the path unquoted (`-m pybind11 --cmakedir` quotes paths with spaces).
+  execute_process(COMMAND "${Python_EXECUTABLE}" -c "import pybind11; print(pybind11.get_cmake_dir())"
                   OUTPUT_VARIABLE pybind11_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
   find_package(pybind11 CONFIG REQUIRED)
-  pybind11_add_module(_fxcore cpp/bindings/module.cpp)
+  # NO_EXTRAS skips pybind11's post-build strip, which breaks on folder names containing "(".
+  pybind11_add_module(_fxcore NO_EXTRAS cpp/bindings/module.cpp)
   target_link_libraries(_fxcore PRIVATE fxcore)
-  set_target_properties(_fxcore PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/fxquant)
+  # The generator expression stops multi-config generators (Visual Studio, Xcode)
+  # from adding a Release/ or Debug/ sub-folder, so Python finds the module.
+  set_target_properties(_fxcore PROPERTIES LIBRARY_OUTPUT_DIRECTORY "$<1:${CMAKE_SOURCE_DIR}/fxquant>")
 endif()

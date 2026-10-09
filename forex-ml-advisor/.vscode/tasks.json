@@ -6,14 +6,14 @@
             "type": "process",
             "command": "bash",
             "args": [
-                "${workspaceFolder}/setup_mac_linux.sh"
+                "setup_mac_linux.sh"
             ],
             "windows": {
                 "command": "cmd.exe",
                 "args": [
                     "/d",
                     "/c",
-                    "${workspaceFolder}\\setup_windows.bat",
+                    "setup_windows.bat",
                     "--no-pause"
                 ]
             },
@@ -30,7 +30,7 @@
         {
             "label": "2. Run analysis - demo (synthetic market)",
             "type": "process",
-            "command": "${command:python.interpreterPath}",
+            "command": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "-m",
                 "fxquant",
@@ -53,12 +53,15 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
+            },
+            "windows": {
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
             }
         },
         {
             "label": "3. Run analysis - live Yahoo data",
             "type": "process",
-            "command": "${command:python.interpreterPath}",
+            "command": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "-m",
                 "fxquant",
@@ -77,12 +80,15 @@
                 "reveal": "always",
                 "panel": "dedicated",
                 "clear": true
+            },
+            "windows": {
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
             }
         },
         {
             "label": "4. Run analysis - CSV files in data/",
             "type": "process",
-            "command": "${command:python.interpreterPath}",
+            "command": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "-m",
                 "fxquant",
@@ -103,12 +109,15 @@
                 "reveal": "always",
                 "panel": "dedicated",
                 "clear": true
+            },
+            "windows": {
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
             }
         },
         {
             "label": "5. Run all tests",
             "type": "process",
-            "command": "${command:python.interpreterPath}",
+            "command": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "-m",
                 "pytest",
@@ -130,12 +139,15 @@
             "group": {
                 "kind": "test",
                 "isDefault": true
+            },
+            "windows": {
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
             }
         },
         {
             "label": "6. Benchmark C++ vs Python",
             "type": "process",
-            "command": "${command:python.interpreterPath}",
+            "command": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "-m",
                 "fxquant",
@@ -152,6 +164,9 @@
                 "reveal": "always",
                 "panel": "dedicated",
                 "clear": true
+            },
+            "windows": {
+                "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
             }
         },
         {
@@ -173,9 +188,7 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             },
-            "problemMatcher": [
-                "$gcc"
-            ],
+            "problemMatcher": [],
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated",

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from . import core
 from .backtest import backtest_pair, expectancy_by_edge, portfolio_metrics, round_trip_cost
@@ -46,6 +47,7 @@ class AnalysisResult:
     watchlist: list[dict]
     exposure: pd.Series
     timings: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _arrow(x: float) -> str:
@@ -61,6 +63,13 @@ class ForexAdvisor:
 
     # ------------------------------------------------------------------
     def run(self, data: dict[str, pd.DataFrame]) -> AnalysisResult:
+        # The models are small: extra OpenMP/BLAS threads gain little, and on a busy
+        # machine oversubscribed threads slowed runs down up to 30x. Fixed threads
+        # also make results identical from one computer to the next.
+        with threadpool_limits(limits=self.config.model.n_threads):
+            return self._run(data)
+
+    def _run(self, data: dict[str, pd.DataFrame]) -> AnalysisResult:
         cfg = self.config
         timings: dict[str, float] = {}
         clock = time.perf_counter()
@@ -84,6 +93,14 @@ class ForexAdvisor:
         wf = walk_forward(dataset, feature_cols, cfg.model, self.log)
         dataset["p_oos"] = wf.oos_proba
         lap("walk-forward training")
+        warnings: list[str] = []
+        if wf.folds.empty:
+            bars = int(np.median([len(df) for df in data.values()]))
+            warnings.append(
+                f"Not enough history to validate the model ({len(data)} pairs x ~{bars:,} bars): no out-of-sample "
+                "test could be run, so no trade can pass the filters. Use more history (about a year of hourly "
+                "bars, or 4+ years of daily bars, for a handful of pairs) or more pairs.")
+            self.log("[warning] " + warnings[-1])
 
         final = fit_final(dataset, feature_cols, cfg.model)
         latest = dataset.groupby("pair").tail(1).set_index("pair")
@@ -130,6 +147,9 @@ class ForexAdvisor:
             (ideas if idea["eligible"] else passed_on).append(idea)
         recs, blocked = apply_portfolio_limits(ideas, corr, cfg.advisor)
         recs = [self._finalise(r, prices) for r in recs]
+        for r in recs:
+            if not np.isfinite(r.get("lots", np.nan)):
+                warnings.append(f"{r['pair']}: lot size unavailable - {r['lot_note']}")
         pair_table["advice"] = "no trade"
         for r in recs:
             pair_table.loc[r["pair"], "advice"] = r["action"]
@@ -145,7 +165,7 @@ class ForexAdvisor:
             calibration=calib, importance=importance, folds=wf.folds,
             final_weights={k: round(float(w), 3) for k, w in zip(StackedModel.COMPONENTS, final.weights)},
             portfolio=port, portfolio_curve=curve, expectancy=expectancy, recommendations=recs, watchlist=watchlist,
-            exposure=currency_exposure(recs), timings=timings)
+            exposure=currency_exposure(recs), timings=timings, warnings=warnings)
 
     # ------------------------------------------------------------------
     def _pair_table(self, data, latest, backtests, by_pair, bpd) -> pd.DataFrame:
@@ -242,7 +262,7 @@ class ForexAdvisor:
         if not np.isfinite(exp_r):
             reasons.append("no out-of-sample trades with a comparable signal strength")
         elif exp_r < cfg.advisor.min_expected_r:
-            reasons.append(f"expected value {exp_r:+.2f}R after costs is below {cfg.advisor.min_expected_r:.2f}R")
+            reasons.append(f"expected value {exp_r:+.3f}R after costs is below the {cfg.advisor.min_expected_r:.2f}R minimum")
 
         strength_spread = float(row.get("strength_spread_week", np.nan))
         strength_align = np.clip(2 * strength_spread * d, -1, 1) if np.isfinite(strength_spread) else 0.0
@@ -290,6 +310,13 @@ class ForexAdvisor:
 
     def _finalise(self, idea: dict, prices: dict) -> dict:
         a = self.config.advisor
+        spec = pair_spec(idea["pair"])
         size = position_size(a.account_equity, idea["risk_fraction"], idea["entry"], idea["stop"],
-                             pair_spec(idea["pair"]), prices, a.account_currency)
-        return {**idea, **size}
+                             spec, prices, a.account_currency)
+        out = {**idea, **size}
+        if not np.isfinite(size["lots"]):
+            out["lot_note"] = (f"no loaded pair converts {spec.quote} into {a.account_currency}; add a pair that "
+                           f"contains {a.account_currency} (e.g. {a.account_currency}USD) or use USD as the account "
+                           f"currency. Risk amount: {size['risk_amount']:,.2f} {a.account_currency}, "
+                           f"stop {size['stop_pips']:.0f} pips")
+        return out

@@ -34,6 +34,13 @@ if not defined PY (
 for /f "delims=" %%v in ('%PY% -c "import sys; print(sys.version.split()[0])"') do echo Using Python %%v
 
 rem --- 2. Virtual environment ---------------------------------------------------
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" -m pip --version >nul 2>nul
+    if errorlevel 1 (
+        echo The existing .venv is incomplete - recreating it ...
+        rmdir /s /q .venv
+    )
+)
 if not exist ".venv\Scripts\python.exe" (
     echo Creating virtual environment in .venv ...
     %PY% -m venv .venv
@@ -54,6 +61,7 @@ rem --- 4. C++ core (optional: falls back to NumPy without a compiler) ---------
 echo Building the C++ core ...
 "%VPY%" -m pip install -e .
 if errorlevel 1 echo [warn] Installing the fxquant package failed; you can still run it from this folder.
+"%VPY%" tools\configure_vscode_cpp.py >nul 2>nul
 "%VPY%" -c "from fxquant import core; print('Numeric core in use:', core.BACKEND)"
 "%VPY%" -c "from fxquant import core; import sys; sys.exit(core.BACKEND != 'c++')" >nul 2>nul
 if errorlevel 1 (

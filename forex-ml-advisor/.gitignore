@@ -16,3 +16,6 @@ dist/
 reports/
 data/*
 !data/README.md
+
+# Machine-specific C++ IntelliSense paths (written by the setup scripts)
+.vscode/c_cpp_properties.json

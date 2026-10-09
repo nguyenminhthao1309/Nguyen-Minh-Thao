@@ -82,6 +82,7 @@ class ModelConfig:
     train_stride: int = 4          # subsample overlapping labels
     min_train_rows: int = 2000
     random_state: int = 42
+    n_threads: int = 1             # CPU threads for model fitting (1 = fastest and reproducible here)
 
 
 @dataclass

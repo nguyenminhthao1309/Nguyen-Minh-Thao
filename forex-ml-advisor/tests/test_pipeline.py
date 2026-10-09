@@ -52,3 +52,28 @@ def test_result_structure(strong):
     assert strong.exposure.abs().max() <= strong.config.advisor.max_currency_risk + 1e-12 if len(strong.exposure) else True
     text = render_markdown(strong)
     assert "Not financial advice" in text and "## 2. Market sections" in text
+
+
+def test_short_history_is_explained():
+    data = generate_synthetic(["EURUSD", "GBPUSD", "USDJPY"], years=0.3, end="2026-09-30", seed=2)
+    res = ForexAdvisor(Config(pairs=list(data)), log=lambda *a: None).run(data)
+    assert res.folds.empty and res.recommendations == []
+    assert any("Not enough history" in w for w in res.warnings)
+    assert "Not enough history" in render_markdown(res)
+
+
+def test_unconvertible_account_currency_is_flagged():
+    advisor = ForexAdvisor(Config())
+    advisor.config.advisor.account_currency = "VND"
+    idea = {"pair": "EURUSD", "entry": 1.10, "stop": 1.09, "risk_fraction": 0.005}
+    out = advisor._finalise(idea, {"EURUSD": 1.10})
+    assert not np.isfinite(out["lots"]) and "VND" in out["lot_note"]
+
+
+def test_each_run_keeps_its_own_report(strong, tmp_path):
+    from fxquant.report import save_report
+
+    first = save_report(strong, tmp_path)
+    second = save_report(strong, tmp_path)
+    assert first["report"] != second["report"] and first["report"].exists() and second["report"].exists()
+    assert (tmp_path / "latest_report.md").read_text(encoding="utf-8") == second["report"].read_text(encoding="utf-8")

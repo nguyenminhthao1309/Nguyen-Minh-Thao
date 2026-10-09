@@ -3,69 +3,151 @@
 from __future__ import annotations
 
 import argparse
+import re
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-from .config import UNIVERSE, Config, SEGMENTS
+from .config import UNIVERSE, Config, SEGMENTS, pair_spec
 
 
-def _pairs(args) -> list[str]:
+class UserError(Exception):
+    """A problem the user can fix; printed as a short message instead of a traceback."""
+
+
+def normalise_pair(text: str) -> str:
+    """'eur/usd', 'EUR_USD', 'EURUSD=X' -> 'EURUSD'."""
+    pair = re.sub(r"=X$", "", text.strip().upper())
+    pair = re.sub(r"[^A-Z]", "", pair)
+    if len(pair) != 6:
+        raise UserError(f"'{text.strip()}' is not a currency pair. Use six letters such as EURUSD or GBPJPY.")
+    return pair
+
+
+def parse_segments(text: str) -> list[str]:
+    segments = []
+    for raw in text.split(","):
+        seg = raw.strip().lower()
+        seg = {"majors": "major", "crosses": "cross", "minor": "cross", "minors": "cross",
+               "exotics": "exotic"}.get(seg, seg)
+        if not seg:
+            continue
+        if seg not in SEGMENTS:
+            raise UserError(f"Unknown segment '{raw.strip()}'. Use any of: {', '.join(SEGMENTS)}.")
+        segments.append(seg)
+    return segments
+
+
+def _selection(args) -> tuple[list[str] | None, list[str] | None]:
+    """(pairs, segments) requested on the command line; None means no restriction.
+
+    For CSV files the pair list is not limited to the built-in universe: by
+    default every <PAIR>.csv in the folder is used.
+    """
     if args.pairs:
-        return [p.strip().upper() for p in args.pairs.split(",") if p.strip()]
-    segments = [s.strip() for s in args.segments.split(",")] if args.segments else list(SEGMENTS)
-    return [p for p, spec in UNIVERSE.items() if spec.segment in segments]
+        pairs = list(dict.fromkeys(normalise_pair(p) for p in args.pairs.split(",") if p.strip()))
+        if not pairs:
+            raise UserError("--pairs is empty.")
+        return pairs, None
+    segments = parse_segments(args.segments) if args.segments else None
+    if getattr(args, "source", "") == "csv":
+        return None, segments
+    return [p for p, spec in UNIVERSE.items() if segments is None or spec.segment in segments], None
+
+
+def _load(args) -> dict:
+    from .data import DataError, load_data, resolve_timezone
+
+    pairs, segments = _selection(args)
+    if args.source == "csv":
+        try:
+            resolve_timezone(getattr(args, "csv_timezone", None))
+        except DataError as exc:
+            raise UserError(str(exc)) from exc
+    verb = {"synthetic": "generating", "yahoo": "downloading", "csv": "loading"}[args.source]
+    what = f"{len(pairs)} pairs" if pairs else "price files"
+    where = f" from {args.csv_dir}" if args.source == "csv" else f" ({args.source})"
+    print(f"[cli] {verb} {what}{where} ...")
+    try:
+        data = load_data(args.source, pairs, csv_dir=getattr(args, "csv_dir", "data"),
+                         timezone=getattr(args, "csv_timezone", None), interval=args.interval,
+                         period=args.period, years=args.years, seed=args.seed, momentum=args.momentum)
+    except DataError as exc:
+        raise UserError(str(exc)) from exc
+    if segments:
+        data = {p: df for p, df in data.items() if pair_spec(p).segment in segments}
+    if not data:
+        if args.source == "yahoo":
+            raise UserError("No data loaded: Yahoo Finance could not be reached. Check your internet "
+                            "connection; Yahoo also rate-limits, so wait a few minutes or use fewer pairs.")
+        raise UserError(f"No data loaded for the requested pairs/segments from {args.source}.")
+    return data
 
 
 def cmd_analyze(args) -> None:
     from .advisor import ForexAdvisor
-    from .data import load_data
     from .report import console_summary, save_report
 
-    cfg = Config(pairs=_pairs(args))
-    cfg.advisor.account_equity = args.equity
-    cfg.advisor.account_currency = args.account_currency.upper()
-    cfg.advisor.risk_per_trade = args.risk / 100
-    cfg.model.horizon = args.horizon
-    if args.fast:
-        cfg.model.retrain_every, cfg.model.train_stride = "90D", 8
+    from .features import infer_bar_delta
 
-    print(f"[cli] loading {len(cfg.pairs)} pairs from {args.source} ...")
-    data = load_data(args.source, cfg.pairs, csv_dir=args.csv_dir, interval=args.interval, period=args.period,
-                     years=args.years, seed=args.seed, momentum=args.momentum)
-    if not data:
-        raise SystemExit("No data loaded. For --source yahoo check your internet connection; "
-                         "for --source csv check the folder and file names (e.g. data/EURUSD.csv).")
+    if args.equity <= 0 or not 0 < args.risk <= 5:
+        raise UserError("--equity must be positive and --risk between 0 and 5 (percent of equity).")
+    if not re.fullmatch(r"[A-Za-z]{3}", args.account_currency.strip()):
+        raise UserError(f"Account currency '{args.account_currency}' should be a 3-letter code such as USD or EUR.")
+    data = _load(args)
+    cfg = Config(pairs=list(data))
+    cfg.advisor.account_equity = args.equity
+    cfg.advisor.account_currency = args.account_currency.strip().upper()
+    cfg.advisor.risk_per_trade = args.risk / 100
+    daily = infer_bar_delta(next(iter(data.values())).index) >= np.timedelta64(1, "D")
+    cfg.model.horizon = args.horizon or (5 if daily else 24)
+    if daily:
+        cfg.model.train_stride = 1  # daily labels barely overlap, keep every row
+    if args.fast:
+        cfg.model.retrain_every = "90D"
+        cfg.model.train_stride *= 2
+
     result = ForexAdvisor(cfg).run(data)
     paths = save_report(result, args.out)
     print()
     print(console_summary(result))
-    print(f"\nReport: {paths['report']}\nIdeas:  {paths['ideas']}")
-    print(f"Latest report is always at {paths['latest']} (in VS Code: open it and press Ctrl+Shift+V)")
+    if "report" in paths:
+        print(f"\nReport: {paths['report']}\nIdeas:  {paths.get('ideas', '-')}")
+    if "latest" in paths:
+        print(f"Latest report is always at {paths['latest']} (in VS Code: open it, then Ctrl+Shift+V / Cmd+Shift+V)")
 
 
 def cmd_save_data(args) -> None:
     """Save market data as one CSV per pair, merging with files already there."""
     import pandas as pd
 
-    from .data import load_data, read_csv_ohlc
+    from .data import read_csv_ohlc
 
-    pairs = _pairs(args)
-    print(f"[cli] downloading {len(pairs)} pairs from {args.source} ...")
-    data = load_data(args.source, pairs, interval=args.interval, period=args.period,
-                     years=args.years, seed=args.seed, momentum=args.momentum)
+    data = _load(args)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    saved = 0
     for pair, df in data.items():
         path = out / f"{pair}.csv"
         if path.exists():  # keep older history so the archive grows beyond the feed's limit
-            old = read_csv_ohlc(path)
-            df = pd.concat([old, df])
-            df = df[~df.index.duplicated(keep="last")].sort_index()
-        df.rename_axis("timestamp").to_csv(path)
+            try:
+                old = read_csv_ohlc(path)
+                df = pd.concat([old, df])
+                df = df[~df.index.duplicated(keep="last")].sort_index()
+            except Exception as exc:
+                print(f"  could not merge with the existing {path.name} ({exc}); overwriting it")
+        try:
+            df.rename_axis("timestamp").to_csv(path)
+        except PermissionError:
+            print(f"  could not write {path} - is it open in another program (e.g. Excel)? skipped")
+            continue
+        saved += 1
         print(f"  {path}  {len(df):,} bars  {df.index[0]:%Y-%m-%d} -> {df.index[-1]:%Y-%m-%d}")
-    print(f"Saved {len(data)} pairs. Analyse them with: python -m fxquant analyze --source csv --csv-dir {out}")
+    if not saved:
+        raise UserError("Nothing was saved.")
+    print(f"Saved {saved} pairs. Analyse them with: python -m fxquant analyze --source csv --csv-dir {out}")
 
 
 def cmd_bench(args) -> None:
@@ -73,8 +155,10 @@ def cmd_bench(args) -> None:
     from . import core
 
     if core.BACKEND != "c++":
-        raise SystemExit("The C++ core is not built, so there is nothing to compare. Install a C++ compiler "
-                         "and run the setup again (or `pip install -e .`). See README, 'C++ compiler'.")
+        print("The C++ core is not built on this computer, so there is nothing to compare: fxquant is using "
+              "its NumPy implementation (same results, slower). To enable C++, install a compiler and run "
+              "the setup again (see README, 'Install the tools').")
+        return
     from . import _fxcore as cpp
 
     rng = np.random.default_rng(0)
@@ -107,6 +191,9 @@ def main(argv: list[str] | None = None) -> None:
     a = sub.add_parser("analyze", help="analyse the market and produce trade ideas")
     a.add_argument("--source", choices=["synthetic", "yahoo", "csv"], default="synthetic")
     a.add_argument("--csv-dir", default="data", help="folder with one <PAIR>.csv per pair (for --source csv)")
+    a.add_argument("--csv-timezone", default="UTC",
+                   help="time zone of CSV time stamps without one: UTC (default), an offset like UTC+2, "
+                        "or a name like Europe/Athens (typical MetaTrader server time)")
     a.add_argument("--pairs", help="comma-separated list, e.g. EURUSD,GBPUSD,USDJPY")
     a.add_argument("--segments", help="comma-separated subset of: major,cross,exotic")
     a.add_argument("--interval", default="1h", help="Yahoo bar size (1h recommended)")
@@ -114,7 +201,7 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--years", type=float, default=2.0, help="synthetic history length")
     a.add_argument("--seed", type=int, default=42, help="synthetic random seed")
     a.add_argument("--momentum", type=float, default=0.06, help="synthetic signal strength (0 = pure noise)")
-    a.add_argument("--horizon", type=int, default=24, help="holding horizon in bars")
+    a.add_argument("--horizon", type=int, default=None, help="holding horizon in bars (default 24 hourly / 5 daily)")
     a.add_argument("--equity", type=float, default=10_000.0, help="account equity")
     a.add_argument("--account-currency", default="USD")
     a.add_argument("--risk", type=float, default=0.5, help="risk per trade, percent of equity")
@@ -139,7 +226,13 @@ def main(argv: list[str] | None = None) -> None:
     b.set_defaults(func=cmd_bench)
 
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except UserError as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        if "debugpy" in sys.modules:  # VS Code F5: end quietly instead of pausing on an expected error
+            return
+        sys.exit(1)
 
 
 if __name__ == "__main__":

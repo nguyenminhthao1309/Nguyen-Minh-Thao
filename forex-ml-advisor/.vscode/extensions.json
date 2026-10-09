@@ -2,7 +2,6 @@
     "recommendations": [
         "ms-python.python",
         "ms-python.debugpy",
-        "ms-vscode.cpptools",
-        "ms-vscode.cmake-tools"
+        "ms-vscode.cpptools"
     ]
 }

@@ -117,3 +117,49 @@ def test_timestamp_formats(stamps, expected):
 
     got = parse_timestamps(pd.Series(stamps))
     assert list(got) == [pd.Timestamp(e, tz="UTC") for e in expected]
+
+
+def _bars(n=30):
+    idx = pd.date_range("2026-03-02 00:00", periods=n, freq="h")
+    close = 1.1 + np.cumsum(np.full(n, 1e-4))
+    return idx, close
+
+
+def test_metatrader5_tab_separated(tmp_path):
+    idx, close = _bars()
+    lines = ["<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>"]
+    lines += [f"{t:%Y.%m.%d}\t{t:%H:%M:%S}\t{c:.5f}\t{c + 2e-4:.5f}\t{c - 2e-4:.5f}\t{c:.5f}\t10\t0\t5"
+              for t, c in zip(idx, close)]
+    f = tmp_path / "EURUSD.csv"
+    f.write_text("\n".join(lines) + "\n", encoding="utf-16")  # MT5 can write UTF-16
+    df = read_csv_ohlc(f)
+    assert len(df) == 30 and df.index[0] == pd.Timestamp("2026-03-02 00:00", tz="UTC")
+
+
+def test_metatrader4_without_header(tmp_path):
+    idx, close = _bars()
+    f = tmp_path / "EURUSD.csv"
+    f.write_text("".join(f"{t:%Y.%m.%d},{t:%H:%M},{c:.5f},{c + 2e-4:.5f},{c - 2e-4:.5f},{c:.5f},100\n"
+                         for t, c in zip(idx, close)))
+    df = read_csv_ohlc(f)
+    assert len(df) == 30 and df["close"].iloc[-1] == pytest.approx(close[-1], abs=1e-5)
+
+
+@pytest.mark.parametrize("tz,winter_hour,summer_hour", [("UTC+2", 22, 22), ("Europe/Athens", 22, 21), ("UTC", 0, 0)])
+def test_csv_timezone(tz, winter_hour, summer_hour):
+    from fxquant.data import parse_timestamps
+
+    got = parse_timestamps(pd.Series(["2026-01-15 00:00", "2026-07-15 00:00"]), timezone=tz)
+    assert [got[0].hour, got[1].hour] == [winter_hour, summer_hour]
+
+
+def test_bad_csv_file_is_skipped_not_fatal(tmp_path, capsys):
+    from fxquant.data import load_csv_dir
+
+    idx, close = _bars()
+    pd.DataFrame({"open": close, "high": close, "low": close, "close": close},
+                 index=pd.Index(idx, name="timestamp")).to_csv(tmp_path / "EURUSD.csv")
+    (tmp_path / "GBPUSD.csv").write_text("this,is,not\nprice,data,at all\n")
+    out = load_csv_dir(tmp_path)
+    assert list(out) == ["EURUSD"]
+    assert "skipping GBPUSD.csv" in capsys.readouterr().out

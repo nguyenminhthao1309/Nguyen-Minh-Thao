@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +65,8 @@ def render_markdown(res: AnalysisResult) -> str:
         f"bar size {_duration(res.bar_size)}, numeric core: **{res.backend}**. "
         f"Account: {cfg.advisor.account_equity:,.0f} {cfg.advisor.account_currency}, "
         f"base risk {cfg.advisor.risk_per_trade:.2%} per idea, max total risk {cfg.advisor.max_total_risk:.1%}.\n")
+    for w in res.warnings:
+        add(f"> **Warning:** {w}\n")
 
     # 1. Advice ----------------------------------------------------------
     add("## 1. Trade ideas\n")
@@ -154,7 +157,7 @@ def render_markdown(res: AnalysisResult) -> str:
     add(md_table(res.calibration, {"mean_pred": ".3f", "realised_up": ".3f"}))
     if len(res.importance):
         add("**Top features** (drop in OOS AUC when shuffled):\n")
-        add(md_table(res.importance.head(15).to_frame("auc_drop"), {"auc_drop": "+.4f"}))
+        add(md_table(res.importance.head(15).rename_axis("feature").to_frame("auc_drop"), {"auc_drop": "+.4f"}))
     if not res.folds.empty:
         add("**Walk-forward folds**\n")
         add(md_table(res.folds.assign(test_start=res.folds["test_start"].dt.strftime("%Y-%m-%d"),
@@ -172,8 +175,11 @@ def render_markdown(res: AnalysisResult) -> str:
         add("_none_\n")
 
     add("\n## 5. Method\n")
-    add("Features (momentum, RSI, ADX, efficiency ratio, variance ratio, Bollinger, volatility regime, H4/D1 "
-        "context, session flags, currency-strength ranks) are computed by the C++ core. Labels are triple-barrier "
+    intraday = res.bar_size < pd.Timedelta("1D")
+    context = "H4/D1 context, session flags" if intraday else "weekly context"
+    add("Features (momentum, RSI, ADX, efficiency ratio, variance ratio, Bollinger, volatility regime, "
+        f"{context}, currency-strength ranks) are computed with the {_core_name(res.backend)}. "
+        "Labels are triple-barrier "
         f"outcomes (+/-{cfg.model.barrier_mult:g} x ATR x sqrt({cfg.model.horizon}) within {cfg.model.horizon} bars). "
         "A stack of a trend factor, gradient boosting and logistic regression is retrained every "
         f"{cfg.model.retrain_every} with purged walk-forward validation. Every number in sections 2-4 is "
@@ -194,25 +200,58 @@ def _jsonable(x):
     return x
 
 
+def _core_name(backend: str) -> str:
+    return "C++ core" if backend == "c++" else "NumPy implementation of the core (C++ core not built)"
+
+
+def _safe_write(path: Path, text: str | None = None, frame: pd.DataFrame | None = None) -> bool:
+    """Write a file; if it is locked (e.g. open in Excel on Windows) warn and carry on."""
+    try:
+        if frame is not None:
+            frame.to_csv(path)
+        else:
+            path.write_text(text, encoding="utf-8")
+        return True
+    except PermissionError:
+        print(f"[report] could not write {path} - is it open in another program (e.g. Excel)? skipped")
+        return False
+
+
 def save_report(res: AnalysisResult, out_dir: str | Path) -> dict[str, Path]:
+    """Write the report, trade ideas and tables.
+
+    Time-stamped copies use the run time (local clock), so every run keeps its
+    own copy; latest_report.md / latest_trade_ideas.json always hold the newest.
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    stamp = f"{res.data_end:%Y%m%d_%H%M}"
-    paths = {"report": out / f"fx_report_{stamp}.md", "ideas": out / f"trade_ideas_{stamp}.json",
-             "latest": out / "latest_report.md", "latest_ideas": out / "latest_trade_ideas.json"}
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+    n = 1
+    while (out / f"fx_report_{stamp}.md").exists():  # two runs in the same second
+        n += 1
+        stamp = f"{datetime.now():%Y%m%d_%H%M%S}_{n}"
     markdown = render_markdown(res)
     ideas = [{k: _jsonable(v) for k, v in r.items()} for r in res.recommendations]
     ideas_json = json.dumps({"generated_at": res.generated_at.isoformat(),
                              "data_end": res.data_end.isoformat(), "ideas": ideas}, indent=2)
-    for key, text in (("report", markdown), ("latest", markdown), ("ideas", ideas_json), ("latest_ideas", ideas_json)):
-        paths[key].write_text(text, encoding="utf-8")
+    files = {"report": (f"fx_report_{stamp}.md", markdown), "latest": ("latest_report.md", markdown),
+             "ideas": (f"trade_ideas_{stamp}.json", ideas_json), "latest_ideas": ("latest_trade_ideas.json", ideas_json)}
+    paths: dict[str, Path] = {}
+    for key, (name, text) in files.items():
+        if _safe_write(out / name, text):
+            paths[key] = out / name
     tables = {"pairs": res.pair_table, "segments": res.segment_table, "sessions": res.session_stats,
               "strength": res.strength_table, "folds": res.folds}
     for name, df in tables.items():
-        if df is not None and not df.empty:
+        if df is not None and not df.empty and _safe_write(out / f"{name}_{stamp}.csv", frame=df):
             paths[name] = out / f"{name}_{stamp}.csv"
-            df.to_csv(paths[name])
     return paths
+
+
+def strongest_and_weakest(ranked: list[str], k: int = 3) -> tuple[list[str], list[str]]:
+    """Top and bottom of a ranking without overlap (k shrinks for short lists)."""
+    k = min(k, len(ranked) // 2)
+    return ranked[:k], (ranked[-k:][::-1] if k else [])
 
 
 def console_summary(res: AnalysisResult) -> str:
@@ -221,9 +260,11 @@ def console_summary(res: AnalysisResult) -> str:
     if "auc" in m:
         lines.append(f"  OOS AUC {m['auc']:.3f} | signal hit rate {m['signal_hit_rate']:.1%} | "
                      f"strategy Sharpe {res.portfolio.get('sharpe', float('nan')):.2f}")
-    top = res.strength_table.index[:3].tolist()
-    bottom = res.strength_table.index[-3:].tolist()
-    lines.append(f"  Strongest currencies: {', '.join(top)} | weakest: {', '.join(bottom)}")
+    top, bottom = strongest_and_weakest(res.strength_table.index.tolist())
+    if top:
+        lines.append(f"  Strongest currencies: {', '.join(top)} | weakest: {', '.join(bottom)}")
+    for w in res.warnings:
+        lines.append(f"  WARNING: {w}")
     if res.recommendations:
         lines.append("  Trade ideas:")
         for r in res.recommendations:

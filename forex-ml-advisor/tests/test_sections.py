@@ -40,3 +40,12 @@ def test_overlap_and_off_hours():
     assert m.loc[idx[1], "Off-hours"]
     weekday = session_membership(pd.DatetimeIndex(["2026-03-03 21:00"], tz="UTC"))
     assert not weekday["Off-hours"].iloc[0]  # Sydney opens before New York closes
+
+
+def test_strongest_and_weakest_never_overlap():
+    from fxquant.report import strongest_and_weakest
+
+    assert strongest_and_weakest(["GBP", "USD", "JPY", "EUR"]) == (["GBP", "USD"], ["EUR", "JPY"])
+    top, bottom = strongest_and_weakest(list("ABCDEFGH"))
+    assert top == ["A", "B", "C"] and bottom == ["H", "G", "F"]
+    assert strongest_and_weakest(["USD"]) == ([], [])

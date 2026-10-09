@@ -26,62 +26,76 @@ matches the C++ to 1e-9.
 
 | tool | where | notes |
 |---|---|---|
-| **Python 3.10 or newer** | https://www.python.org/downloads/ | Windows: tick **"Add python.exe to PATH"** in the installer |
+| **Python 3.10 or newer** | https://www.python.org/downloads/ | Windows: tick **"Add python.exe to PATH"** in the installer. macOS: the `python3` that comes with Xcode is too old, so install from python.org |
 | **Visual Studio Code** | https://code.visualstudio.com/ | |
-| C++ compiler (optional) | Windows: [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/), "Desktop development with C++" workload. macOS: `xcode-select --install`. Linux: `sudo apt install g++` | Without a compiler everything still works on the NumPy fallback, just slower |
+| C++ compiler (optional) | Windows: [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/), "Desktop development with C++" workload. macOS: `xcode-select --install`. Linux: `sudo apt install g++ python3-dev` | Without a compiler everything still works on the NumPy fallback (same results, slower) |
+| CMake (optional) | https://cmake.org/download/ (tick "Add CMake to the PATH") or `brew install cmake` | Only for task 7, the separate C++ unit tests |
 
 ### 2. Open the folder
 
 1. Save the `forex-ml-advisor` folder anywhere, for example in Documents. Unzip it first if you
    downloaded the `.zip`.
 2. In VS Code choose **File > Open Folder...** and select the `forex-ml-advisor` folder itself (the one
-   that contains `run.py`), not a folder above it. Otherwise VS Code will not find the run buttons.
-3. Click **Install** when VS Code offers the recommended extensions (Python, Python Debugger, C/C++).
+   that contains `run.py`), not a folder above it. Otherwise VS Code will not find the run configurations.
+3. When VS Code asks **"Do you trust the authors of the files in this folder?"**, click **Yes, I trust the
+   authors**. In Restricted Mode, tasks and the Run buttons are switched off.
+4. Click **Install** when VS Code offers the recommended extensions (Python, Python Debugger, C/C++).
 
 ### 3. Set up (once, about 2-5 minutes)
 
 * **Terminal > Run Task... > "1. Setup: create .venv, install packages, build C++ core"**
-* Or double-click `setup_windows.bat` (Windows), or run `bash setup_mac_linux.sh` (macOS/Linux).
+* Or double-click `setup_windows.bat` (Windows), or run `bash setup_mac_linux.sh` (macOS/Linux). If
+  Windows shows "Windows protected your PC", click **More info > Run anyway**; the warning appears for
+  any downloaded script.
 
 The setup creates a private Python environment in `.venv`, installs the packages, and builds the C++
-core. At the end it prints `Numeric core in use: c++`, or `python` if no compiler was found.
+core. At the end it prints `Numeric core in use: c++`, or `python` if no compiler was found. Running it
+again is safe: it repairs an incomplete `.venv` and rebuilds the C++ core.
 
 Then tell VS Code to use that environment: press **Ctrl+Shift+P** (Cmd+Shift+P on Mac), run
 **Python: Select Interpreter**, and pick the entry that shows `.venv`.
 
 ### 4. Run
 
-Open **Run and Debug** (Ctrl+Shift+D), choose a configuration from the drop-down, and press **F5**:
+Open **Run and Debug** (Ctrl+Shift+D, or Cmd+Shift+D on Mac) and choose a configuration from the
+drop-down at the top. Then press **Ctrl+F5** (Run Without Debugging; Cmd+F5 on Mac) for a normal run,
+or **F5** to run under the debugger (it stops at breakpoints and on unexpected errors):
 
 | configuration | what it does |
 |---|---|
 | 1. Demo - synthetic market (offline) | full analysis on the built-in simulated market (no internet needed) |
-| 2. Live - Yahoo Finance data | real hourly prices for all 28 pairs (needs internet) |
+| 2. Live - Yahoo Finance data (needs internet) | real hourly prices for all 28 pairs |
 | 3. My data - CSV files in the data folder | your own price files, see `data/README.md` |
-| 4. Quick run - majors only | 7 pairs, fewer refits; about 15 seconds |
-| 5. run.py | uses the SETTINGS at the top of `run.py` (source, pairs, account size, risk) |
-| 6. Save live Yahoo data to the data folder | downloads prices to CSV and merges them with older files |
-| 7. Benchmark - C++ core vs Python | speed comparison |
-| 8. Run all tests | the test suite |
+| 4. Quick run - majors only, fewer refits | 7 pairs, fewer refits; about 15 seconds |
+| 5. run.py - uses the SETTINGS at the top of run.py | uses the SETTINGS at the top of `run.py` (source, pairs, account size, risk) |
+| 6. Save live Yahoo data to the data folder (CSV) | downloads prices to CSV and merges them with older files |
+| 7. Benchmark - C++ core vs Python | speed comparison (says so if the C++ core is not built) |
+| 8. Run all tests (pytest) | the test suite |
 
 You can also open `run.py`, edit `SETTINGS`, and click the **Run** button at the top right.
 
 ### 5. Read the result
 
 The summary appears in the terminal. The full report is written to **`reports/latest_report.md`**:
-open it and press **Ctrl+Shift+V** to see it formatted. Each run also keeps a time-stamped copy, a JSON
-file of the trade ideas, and CSV tables.
+open it and press **Ctrl+Shift+V** (Cmd+Shift+V on Mac) to see it formatted. Each run also keeps its
+own time-stamped copy (`fx_report_<date>_<time>.md`), a JSON file of the trade ideas, and CSV tables.
 
 ### Troubleshooting
 
-| message | fix |
+| what you see | fix |
 |---|---|
 | `No module named 'numpy'` (or pandas / sklearn) | VS Code is using another Python. Run the setup, then **Python: Select Interpreter** > `.venv` |
+| Run and Debug only offers "create a launch.json file" | you opened the folder above `forex-ml-advisor`. Use **File > Open Folder** on the folder that contains `run.py` |
+| Tasks or Run buttons do nothing / "Restricted Mode" | click **Restricted Mode** in the status bar and choose **Trust** |
 | `Python 3.10 or newer was not found` | install Python from python.org (Windows: tick "Add python.exe to PATH"), restart VS Code |
 | `running scripts is disabled on this system` (PowerShell) | run once in the terminal: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
-| `Numeric core in use: python` | no C++ compiler was found. Results are identical, only slower. Install one (table above) and run the setup again |
-| `No data loaded` with Yahoo | check your internet connection; Yahoo sometimes rate-limits, so wait a few minutes or pick fewer pairs |
-| `could not create .venv` on Linux | `sudo apt install python3-venv` |
+| `Numeric core in use: python` | no working C++ compiler was found; the setup prints what to install. Results are identical, only slower. Install it and run the setup again |
+| `No data loaded: Yahoo Finance could not be reached` | check your internet connection; Yahoo also rate-limits, so wait a few minutes or pick fewer pairs |
+| `No price files found in 'data'` | put CSV files such as `data/EURUSD.csv` there (see `data/README.md`), or run configuration 6 |
+| `Not enough history to validate the model` | your CSV files are too short; use about a year of hourly bars or more pairs (see `data/README.md`) |
+| `lot size unavailable` | the account currency does not appear in any analysed pair; add such a pair or use USD |
+| `could not write ... is it open in another program` | close the CSV/report in Excel and run again |
+| `could not create .venv` on Linux | `sudo apt install python3-venv`, then run the setup again |
 
 ### What is in the folder
 
@@ -94,6 +108,7 @@ forex-ml-advisor/
   fxquant/                the Python package (ML, analytics, reports)
   cpp/                    the C++ core (indicators, labelling, backtester) + C++ unit tests
   tests/                  Python test suite
+  tools/                  helper used by the setup (C++ IntelliSense paths)
   data/                   put your own CSV price files here
   reports/                created on the first run; reports are written here
 ```
@@ -102,10 +117,13 @@ forex-ml-advisor/
 
 ## Command line (any terminal)
 
+Run the setup first, then activate the environment in your terminal. VS Code's own terminal does this
+automatically once the `.venv` interpreter is selected.
+
 ```bash
 cd forex-ml-advisor
-pip install -e .            # installs fxquant and builds the C++ core if a compiler is available
-pip install yfinance        # optional: live data
+source .venv/bin/activate          # macOS / Linux
+.venv\Scripts\activate             # Windows (PowerShell or cmd)
 
 # Offline demo on a synthetic market (no internet needed)
 fxquant analyze --source synthetic
@@ -114,7 +132,10 @@ fxquant analyze --source synthetic
 fxquant analyze --source yahoo --equity 25000 --risk 0.5
 
 # Only majors and crosses, your own CSV files (EURUSD.csv, GBPJPY.csv, ...)
-fxquant analyze --source csv --csv-dir ./data --segments major,cross
+fxquant analyze --source csv --csv-dir data --segments major,cross
+
+# MetaTrader files stamped in broker server time
+fxquant analyze --source csv --csv-dir data --csv-timezone Europe/Athens
 
 # Save live data to data/*.csv (re-run later to extend the history)
 fxquant save-data --source yahoo --out data
@@ -127,22 +148,31 @@ fxquant bench
 
 | file | contents |
 |---|---|
-| `latest_report.md`, `fx_report_<time>.md` | full report: trade ideas, every market section, model diagnostics, watchlist |
-| `trade_ideas_<time>.json` | machine-readable ideas (entry/stop/target/lots/risk/rationale) |
+| `latest_report.md`, `fx_report_<date>_<time>.md` | full report: trade ideas, every market section, model diagnostics, watchlist |
+| `latest_trade_ideas.json`, `trade_ideas_<date>_<time>.json` | machine-readable ideas (entry/stop/target/lots/risk/rationale) |
 | `pairs_*.csv`, `segments_*.csv`, `sessions_*.csv`, `strength_*.csv`, `folds_*.csv` | raw tables |
 
-A full run (28 pairs, 2 years of hourly bars, monthly walk-forward refits) takes about 1–2 minutes;
-`--fast` refits every 90 days instead.
+A full run (28 pairs, 2 years of hourly bars, monthly walk-forward refits) takes about 1-2 minutes;
+`--fast` refits every 90 days instead (about twice as fast).
 
-### Building the C++ core separately
+### Building the C++ core separately (optional)
+
+`pip install -e .` (or the setup script) already builds the C++ core. To run the C++ unit tests with
+CMake, use task 7 or these commands (one per line, so they also work in PowerShell):
 
 ```bash
-cmake -S . -B build && cmake --build build -j && ctest --test-dir build   # C++ unit tests
-cmake -S . -B build -DFXCORE_BUILD_PYTHON=ON && cmake --build build       # module via CMake
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
+To build the Python module with CMake instead of pip, add
+`-DFXCORE_BUILD_PYTHON=ON -DPython_EXECUTABLE=<path to .venv python>` to the first command.
+
 The C++ core is optional: if it cannot be compiled, installation still succeeds and `fxquant` uses its
-NumPy implementation automatically. Set `FXQUANT_BACKEND=python` to force the fallback.
+NumPy implementation automatically. To force the fallback, set the environment variable
+`FXQUANT_BACKEND=python` (macOS/Linux: `FXQUANT_BACKEND=python fxquant ...`; PowerShell:
+`$env:FXQUANT_BACKEND="python"`; cmd: `set FXQUANT_BACKEND=python`).
 
 ---
 
@@ -174,7 +204,7 @@ NumPy implementation automatically. Set `FXQUANT_BACKEND=python` to force the fa
 | `fxquant/sessions.py` | DST-aware session membership and per-session range, variance share and drift |
 | `fxquant/strength.py` | least-squares currency-strength decomposition |
 | `fxquant/regime.py` | causal volatility and trend regime labels |
-| `fxquant/risk.py` | position size in lots (any account currency), Kelly cap, portfolio limits |
+| `fxquant/risk.py` | position size in lots (any account currency that appears in a loaded pair), Kelly cap, portfolio limits |
 | `fxquant/advisor.py` | runs the pipeline and turns predictions into trade ideas |
 
 ## Method
@@ -219,8 +249,9 @@ currency conversion.
 ## Testing
 
 ```bash
-pytest                          # 43 tests, about 1 minute
-FXQUANT_BACKEND=python pytest   # same tests on the NumPy fallback
+python -m pytest                # about 1 minute (or VS Code: Testing panel / configuration 8)
+FXQUANT_BACKEND=python python -m pytest      # same tests on the NumPy fallback (macOS/Linux)
+$env:FXQUANT_BACKEND="python"; python -m pytest   # the same in Windows PowerShell
 ```
 
 The tests cover:
